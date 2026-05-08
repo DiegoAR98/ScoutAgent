@@ -32,7 +32,7 @@ Product vision and pitch are described in [Scoutagentproposal.md](Scoutagentprop
 | Digest | The HTML email sent to the user summarizing picks, warnings, and avoids. |
 | Verdict | One of `recommend`, `flag`, `reject` assigned to each candidate. |
 | Dedupe key | Stable identifier (canonical URL + price bucket) used to suppress repeats. |
-| TARS | Tetrate AI Routing Service — Anthropic-compatible LLM gateway. |
+| TARS | Tetrate Agent Router Service — OpenAI-compatible LLM gateway routing to Claude/GPT/etc. by model id. |
 | SerpAPI | Third-party Google search results API used for source discovery. |
 | SRS | Software Requirements Specification (this document). |
 | FR | Functional Requirement (numbered FR-NN). |
@@ -43,7 +43,7 @@ Product vision and pitch are described in [Scoutagentproposal.md](Scoutagentprop
 - [Scoutagentproposal.md](Scoutagentproposal.md) — product proposal and demo plan
 - SerpAPI documentation — https://serpapi.com/search-api
 - SendGrid Mail Send v3 — https://docs.sendgrid.com/api-reference/mail-send/mail-send
-- Anthropic Messages API (compatible shape) — https://docs.anthropic.com/en/api/messages
+- OpenAI Chat Completions API (TARS exposes a compatible shape) — https://platform.openai.com/docs/api-reference/chat
 - Azure Functions Node.js timer trigger — https://learn.microsoft.com/azure/azure-functions/functions-bindings-timer
 - IEEE 830-1998 — Recommended Practice for Software Requirements Specifications
 
@@ -74,7 +74,7 @@ ScoutAgent is a self-contained system composed of three logical components:
                 │   Agent Worker           │  reads/writes ◄─────┘
                 │   ┌────────────────────┐ │
                 │   │ search (SerpAPI)   │ │
-                │   │ fetch (Playwright) │ │
+                │   │ fetch (Readability)│ │
                 │   │ reason (TARS)      │ │
                 │   │ compose            │ │
                 │   │ send (SendGrid)    │ │
@@ -118,14 +118,15 @@ No real-time interaction; all output is asynchronous via email.
 - TypeScript `strict: true` mode required; no `any` in business logic
 - No frontend framework (plain HTML + minimal vanilla JS for form submission)
 - All scheduling is server-side; no on-demand "run now" endpoint in MVP (operator may run via DB update of `next_run_at`)
-- All LLM calls **must** route through Tetrate TARS — direct calls to `api.anthropic.com` are forbidden
-- Secrets only via environment variables (`SERPAPI_KEY`, `TARS_API_KEY`, `TARS_BASE_URL`, `SENDGRID_API_KEY`, `DATABASE_URL`, `EMAIL_FROM`)
+- All LLM calls **must** route through Tetrate TARS — direct calls to provider APIs (`api.anthropic.com`, `api.openai.com`) are forbidden
+- TARS speaks the OpenAI Chat Completions protocol; the official `openai` SDK is used with `baseURL = TARS_API_URL`
+- Secrets only via environment variables (`SERPAPI_KEY`, `TARS_API_KEY`, `TARS_API_URL`, `SENDGRID_API_KEY`, `DATABASE_URL`, `EMAIL_FROM`)
 - All outbound HTTP must enforce timeouts; no unbounded waits
 - All SQL must be parameterized; no string interpolation into queries
 
 ### 2.6 Assumptions & Dependencies
 
-- Tetrate TARS exposes an Anthropic Messages-compatible endpoint (`POST /v1/messages`) with full tool-use support and the configured model (`claude-sonnet-4-6` or `claude-opus-4-7`).
+- Tetrate TARS exposes an OpenAI Chat Completions-compatible endpoint (`POST /v1/chat/completions`) with function/tool-calling support; model id selects the upstream provider (e.g., `claude-sonnet-4-6`, `claude-haiku-4-5`, `gpt-4o-mini`).
 - SerpAPI quota is sufficient for demo and post-demo soak (≥ 1k searches/month available).
 - SendGrid sender identity (`EMAIL_FROM`) is verified before deployment.
 - PostgreSQL is reachable from the Azure Functions runtime (managed instance or Azure DB for PostgreSQL recommended).
@@ -431,36 +432,39 @@ For each external service: endpoint, auth, request shape, response handling, fai
 - **Timeout:** 8 seconds per call
 - **Rate limits:** SerpAPI free plan ~100 searches/month; paid plans up to 5 000+ /month. Worker enforces NFR-COST-3 (4 calls/run max).
 
-### 5.2 Tetrate TARS (Claude)
+### 5.2 Tetrate TARS (OpenAI-compatible LLM gateway)
 
-- **Endpoint:** `POST $TARS_BASE_URL/v1/messages` (Anthropic Messages API shape)
-- **Auth:** header `x-api-key: $TARS_API_KEY` (and `anthropic-version: 2023-06-01`)
+- **Endpoint:** `POST $TARS_API_URL/v1/chat/completions` (OpenAI Chat Completions shape; the `openai` Node SDK handles the path)
+- **SDK:** `openai` Node SDK initialized with `baseURL: $TARS_API_URL`, `apiKey: $TARS_API_KEY` (the SDK sends `Authorization: Bearer …`)
+- **Model:** selected via the `model` field on each request (e.g., `claude-sonnet-4-6`); TARS routes by id to the upstream provider
 - **Request shape:**
 
 ```json
 {
   "model": "claude-sonnet-4-6",
-  "max_tokens": 4000,
   "temperature": 0.2,
-  "system": "<scout-agent system prompt>",
-  "tools": [
-    { "name": "serpapi_search", "input_schema": {"type":"object","properties":{"query":{"type":"string"},"num":{"type":"integer"}},"required":["query"]} },
-    { "name": "fetch_url",       "input_schema": {"type":"object","properties":{"url":{"type":"string"}},"required":["url"]} },
-    { "name": "record_candidates","input_schema": { /* see FR-12 */ } }
+  "max_tokens": 4096,
+  "tool_choice": "auto",
+  "messages": [
+    { "role": "system", "content": "<scout-agent system prompt>" },
+    { "role": "user",   "content": "<alert query + budget>" }
   ],
-  "tool_choice": { "type": "auto" },
-  "messages": [ { "role": "user", "content": "<alert + sourced material>" } ]
+  "tools": [
+    { "type": "function", "function": { "name": "serpapi_search",     "parameters": { "type":"object","properties":{"query":{"type":"string"},"source":{"type":"string","enum":["web","reddit"]}},"required":["query"] } } },
+    { "type": "function", "function": { "name": "fetch_url",          "parameters": { "type":"object","properties":{"url":{"type":"string"}},"required":["url"] } } },
+    { "type": "function", "function": { "name": "record_candidates",  "parameters": { /* see FR-12 */ } } }
+  ]
 }
 ```
 
-- **Response handling:** Loop over `content[]`, dispatch any `tool_use` blocks to local handlers, append `tool_result` blocks, and continue the loop until `stop_reason = 'end_turn'` and the final `tool_use` is `record_candidates`. Validate the structured output against the Zod schema (FR-12).
+- **Response handling:** Inspect `choices[0].message`. If `tool_calls` is present, append the assistant message verbatim, execute each `tool_calls[i].function` locally, then append one `{ role: "tool", tool_call_id, content: "<JSON result>" }` per call and continue the loop. Terminate the loop when the model calls `record_candidates` (its arguments are the final structured output) or when `finish_reason === "stop"` and a previous `record_candidates` was already accepted. Validate `record_candidates` arguments against the Zod schema (FR-12).
 - **Failure modes:**
-  - `429` → retry with backoff up to 3 times
-  - `529` (overloaded) → retry with longer backoff
-  - schema validation failure → one repair attempt with explicit instruction; second failure aborts the run
+  - `429` → retry with exponential backoff up to 3 times
+  - `5xx` (provider overload via TARS) → retry with longer backoff
+  - schema validation failure → one repair attempt by feeding the validation error back as a `tool` message and asking the model to re-call `record_candidates`; second failure aborts the run
   - tool-loop exceeding 12 iterations → abort run (`error = 'tool_loop_overflow'`)
 - **Timeout:** 60 s per HTTP call (cumulative loop budget tracked separately; abort at 75 s)
-- **Token tracking:** persist `usage.input_tokens` and `usage.output_tokens` to `runs`.
+- **Token tracking:** persist `usage.prompt_tokens` and `usage.completion_tokens` to `runs`.
 
 ### 5.3 SendGrid
 

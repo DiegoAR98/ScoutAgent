@@ -16,12 +16,14 @@
     "test:watch": "vitest",
     "dev:scheduler": "tsx watch src/scheduler/dev.ts",
     "dev:web": "tsx watch src/web/server.ts",
+    "run:slice": "tsx src/agent/run.ts",
+    "run:slice:dry": "tsx src/agent/run.ts --dry-run",
     "migrate": "tsx src/db/migrate.ts",
     "start": "node dist/scheduler/index.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.40.0",
     "@azure/functions": "^4.5.0",
+    "openai": "^4.73.0",
     "@mozilla/readability": "^0.5.0",
     "@sendgrid/mail": "^8.1.4",
     "cheerio": "^1.0.0",
