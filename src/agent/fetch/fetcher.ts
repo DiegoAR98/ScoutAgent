@@ -80,34 +80,56 @@ export async function fetchAndExtract(url: string): Promise<FetchedPage> {
 
 export interface UrlVerifyResult {
   url: string;
-  ok: boolean;
   statusCode: number | null;
   finalUrl: string;
+  /** true if status is 2xx/3xx — page loaded cleanly. */
+  ok: boolean;
+  /** true if the URL is verifiably gone (404/410). All other failures (403, 503,
+   *  timeouts) are treated as "ambiguous, probably bot-blocked" and not dead. */
+  dead: boolean;
 }
 
-// Lightweight liveness check used to drop dead links before the digest is
-// rendered. Tries HEAD first (cheap); if the origin doesn't allow HEAD,
-// falls back to a short GET. Accepts any 2xx/3xx as "ok"; everything else
-// (4xx, 5xx, timeouts, network errors) is treated as a dead link.
-export async function verifyUrlLive(url: string, timeoutMs = 6000): Promise<UrlVerifyResult> {
-  const head = await tryOnce(url, 'HEAD', timeoutMs);
-  if (head.statusCode != null && head.ok) return head;
-  // Some sites (e.g., Amazon, Cloudflare-fronted) reject HEAD with 403/405.
-  // Confirm with a GET before declaring the URL dead.
-  if (head.statusCode === 403 || head.statusCode === 405 || head.statusCode == null) {
-    return tryOnce(url, 'GET', timeoutMs);
+// A browser-like User-Agent. Many retailers (Amazon, Best Buy, Target) and
+// Cloudflare-fronted sites 403 anything that smells like a bot. We want
+// verification to behave like a normal browser tab, not a scraper, since
+// the goal is to confirm the link works for a human clicker.
+const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// Lightweight liveness check used to drop ONLY known-dead links before the
+// digest is rendered. Tries HEAD first (cheap); if the origin doesn't allow
+// HEAD, falls back to a short GET. The dead policy is intentionally narrow:
+// only an explicit 404/410 marks the URL as dead. Bot-detection (403/503),
+// rate limits (429), timeouts, and network errors keep the URL — a real
+// browser will likely still load it.
+export async function verifyUrlLive(url: string): Promise<UrlVerifyResult> {
+  let attempt = await tryOnce(url, 'HEAD', 3500);
+  // Many sites reject HEAD with 403/405 (or close the connection without a
+  // status). Re-try with GET before deciding.
+  if (
+    attempt.statusCode === 403 ||
+    attempt.statusCode === 405 ||
+    attempt.statusCode === 501 ||
+    attempt.statusCode === null
+  ) {
+    attempt = await tryOnce(url, 'GET', 6000);
   }
-  return head;
+  const dead = attempt.statusCode === 404 || attempt.statusCode === 410;
+  return { ...attempt, dead };
 }
 
-async function tryOnce(url: string, method: 'HEAD' | 'GET', timeoutMs: number): Promise<UrlVerifyResult> {
+async function tryOnce(url: string, method: 'HEAD' | 'GET', timeoutMs: number): Promise<Omit<UrlVerifyResult, 'dead'>> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       method,
       signal: ctrl.signal,
-      headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml' },
+      headers: {
+        'User-Agent': BROWSER_UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
       redirect: 'follow',
     });
     res.body?.cancel().catch(() => {});

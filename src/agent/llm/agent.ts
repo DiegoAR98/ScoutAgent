@@ -309,24 +309,28 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
   throw new Error(`Agent did not finish within ${MAX_ITERATIONS} iterations`);
 }
 
-// HEAD/GET-checks each candidate URL with a short timeout and drops any
-// that 404, time out, or otherwise fail to load. Prevents the digest from
-// shipping broken links — the most common demo killer.
+// HEAD/GET-checks each candidate URL and drops ONLY explicitly dead links
+// (404/410). Bot-detection 403/503, rate limits, timeouts, and network
+// errors keep the URL — the user's real browser will likely still load it.
 async function pruneDeadLinks(digest: Digest): Promise<Digest> {
   if (digest.candidates.length === 0) return digest;
   const checks = await Promise.all(digest.candidates.map((c) => verifyUrlLive(c.url)));
   const alive: Digest['candidates'] = [];
   const dropped: Array<{ url: string; status: number | null }> = [];
+  const summary: Array<{ url: string; status: number | null; ok: boolean; kept: boolean }> = [];
   for (let i = 0; i < digest.candidates.length; i++) {
     const candidate = digest.candidates[i];
     const check = checks[i];
     if (!candidate || !check) continue;
-    if (check.ok) {
+    const kept = !check.dead;
+    summary.push({ url: candidate.url, status: check.statusCode, ok: check.ok, kept });
+    if (kept) {
       alive.push(candidate);
     } else {
       dropped.push({ url: candidate.url, status: check.statusCode });
     }
   }
+  logger.info({ summary, dropped: dropped.length, kept: alive.length }, 'agent.url_verify');
   if (dropped.length > 0) {
     logger.warn({ dropped }, 'agent.url_verify.dead_links');
   }
