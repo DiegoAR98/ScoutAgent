@@ -2,9 +2,9 @@
 
 ## 500-Character Pitch (for the application form)
 
-> ScoutAgent monitors what you're shopping for and emails you only the best options. You set a search ("electric bike under $500"), and the agent runs autonomously — searching the web, fetching review sites and Reddit threads, scoring results for deal quality and legitimacy, filtering out junk, and sending a curated digest to your inbox on a schedule. No chat. No app. Just a smart agent watching the web for you.
+> You ask, ScoutAgent goes. Tell it what you're shopping for ("electric bike under $500") and the agent runs autonomously — searching the web, fetching review sites and Reddit threads, scoring results for deal quality and legitimacy, filtering out the junk, and emailing you one curated digest. One request, one report. No chat. No app. No noise. Just a smart agent doing the research you don't have time for.
 
-*(499 characters)*
+*(487 characters)*
 
 ---
 
@@ -12,7 +12,7 @@
 
 ### What is ScoutAgent?
 
-ScoutAgent is an autonomous shopping research agent for people who don't have time to wade through sponsored results, fake reviews, and inflated discounts. The user sets a search query and a budget once via a simple web form, and the agent does the rest — researching, reasoning, filtering, and delivering a curated email digest on a weekly schedule.
+ScoutAgent is an autonomous shopping research agent for people who don't have time to wade through sponsored results, fake reviews, and inflated discounts. The user submits a single request — a search query, a budget, and an email — and the agent does the rest: researching, reasoning, filtering, and delivering one curated email digest.
 
 No app to install. No chat interface. Just results in your inbox.
 
@@ -28,16 +28,15 @@ This is a research job. Agents are good at research jobs.
 
 ### How It Works
 
-**Step 1 — User sets an alert (web form)**
+**Step 1 — User submits a request (web form)**
 ```
 What are you looking for?  [ electric bike              ]
 Max budget                 [ $500                       ]
 Your email                 [ you@example.com            ]
-How often?                 [ Weekly ▼                   ]
-                           [ Start watching →           ]
+                           [ Run research →             ]
 ```
 
-**Step 2 — Agent runs autonomously on schedule**
+**Step 2 — Agent runs autonomously**
 
 ```
 SerpAPI search → top organic results, Reddit threads, review sites
@@ -53,13 +52,13 @@ Agent reasons and scores each result:
         ↓
 Filters to top 3 picks with reasoning
         ↓
-SendGrid delivers a clean, curated email digest
+EmailJS delivers a clean, curated email digest
 ```
 
 **Step 3 — User receives the digest**
 
 ```
-Subject: 🔍 Your weekly ScoutAgent report — Electric Bikes Under $500
+Subject: 🔍 Your ScoutAgent report — Electric Bikes Under $500
 
 🏆 TOP PICK: Lectric XP Lite — $399
    ⭐ 4.6 stars · 25,000+ verified reviews
@@ -72,7 +71,7 @@ Subject: 🔍 Your weekly ScoutAgent report — Electric Bikes Under $500
    ✅ 500+ miles reported by commuters
    ⚠️  Check return policy before buying
 
-🚫 AVOID THIS WEEK:
+🚫 AVOID:
    Generic Amazon listings under $350
    → Reddit flagged battery fire risks, no UL cert
 
@@ -80,7 +79,7 @@ Subject: 🔍 Your weekly ScoutAgent report — Electric Bikes Under $500
    $800+ if you're a daily commuter. Under $500
    is solid for casual/weekend use.
 
-[ View full research → ]  [ Change alert settings → ]
+[ Submit another request → ]
 ```
 
 ---
@@ -91,8 +90,8 @@ Subject: 🔍 Your weekly ScoutAgent report — Electric Bikes Under $500
 |---|---|
 | Takes actions | ✅ Searches web, fetches URLs, sends email |
 | Makes decisions | ✅ Scores, filters, flags risks, recommends |
-| Runs autonomously | ✅ Scheduled, no user prompting required |
-| Coordinates systems | ✅ SerpAPI + web fetcher + Claude + SendGrid |
+| Runs unattended after a single trigger | ✅ Single user-triggered run; no further input required |
+| Coordinates systems | ✅ SerpAPI + web fetcher + Claude + EmailJS |
 | Solves a real problem | ✅ Used by the builder, immediately useful |
 
 ---
@@ -102,12 +101,10 @@ Subject: 🔍 Your weekly ScoutAgent report — Electric Bikes Under $500
 | Component | Technology |
 |---|---|
 | Runtime | TypeScript / Node.js |
-| AI reasoning | Claude (tool use + web search) |
+| AI reasoning | Claude via Tetrate TARS (tool use) |
 | Search | SerpAPI (Google Shopping + organic) |
-| Page fetching | Playwright / web_fetch |
-| Email delivery | SendGrid |
-| Scheduling | Cron / Azure Functions |
-| Storage | PostgreSQL (alert config, deduplication) |
+| Page fetching | @mozilla/readability + cheerio fallback |
+| Email delivery | EmailJS |
 | Frontend | Simple HTML form (no framework needed) |
 
 ---
@@ -115,10 +112,9 @@ Subject: 🔍 Your weekly ScoutAgent report — Electric Bikes Under $500
 ### Demo Plan (Live, No Slides)
 
 1. Open the web form live in front of judges
-2. Submit: *"electric bike under $500, weekly"*
-3. Show the agent running in the terminal — tool calls visible in real time
+2. Submit: *"electric bike under $500"*
+3. Show the run log in the terminal as the agent calls SerpAPI, fetches pages, and finalizes its picks
 4. Email arrives within 2–3 minutes with curated picks and reasoning
-5. Show the PostgreSQL record — alert stored, next run scheduled
 
 Total demo time: under 5 minutes. No speculation. Everything is real.
 
@@ -142,6 +138,7 @@ The broader market is anyone who makes considered purchases online and is tired 
 
 ### Future Extensions (Post-Hackathon)
 
+- Recurring schedules (daily / weekly / biweekly alerts on a saved query)
 - WhatsApp delivery (strong fit for Brazilian market via Minas Digital LLC)
 - Price drop triggers (alert immediately when a specific product drops)
 - Multi-source comparison (Amazon vs Walmart vs manufacturer direct)

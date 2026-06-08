@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: scoutagent
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: TARS_MODEL
+        value: claude-sonnet-4-6
+      # Secrets — set values in the Render dashboard, not in source.
+      - key: TARS_API_URL
+        sync: false
+      - key: TARS_API_KEY
+        sync: false
+      - key: SERPAPI_KEY
+        sync: false
+      - key: EMAIL_JS_SERVICE_ID
+        sync: false
+      - key: EMAIL_JS_TEMPLATE
+        sync: false
+      - key: EMAIL_JS_API_KEY
+        sync: false
+      - key: EMAIL_JS_PRIVATE_KEY
+        sync: false

@@ -1,0 +1,173 @@
+<div
+  style="
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif, Arial;
+    font-size: 14px;
+    color: #1f2937;
+    padding: 14px 8px;
+    background-color: #f5f5f5;
+  "
+>
+  <div style="max-width: 640px; margin: auto; background-color: #ffffff">
+    <div style="border-top: 6px solid #458500; padding: 20px 24px">
+      <span style="font-size: 13px; color: #6b7280; letter-spacing: 0.04em; text-transform: uppercase">
+        ScoutAgent report
+      </span>
+      <div style="font-size: 22px; font-weight: 600; margin-top: 6px; color: #111827">
+        {{query}}
+      </div>
+      <div style="font-size: 13px; color: #6b7280; margin-top: 4px">
+        Budget: ${{budget}} &middot; {{pick_count}} pick{{pick_plural}}
+      </div>
+    </div>
+
+    <div style="padding: 4px 24px 8px">
+      {{#has_scout_note}}
+      <p style="margin: 16px 0 8px; padding: 12px 14px; background-color: #f0fdf4; border-left: 3px solid #458500; color: #1f2937">
+        <strong>Scout note:</strong> {{scout_note}}
+      </p>
+      {{/has_scout_note}}
+
+      {{#has_picks}}
+      <div
+        style="
+          margin-top: 24px;
+          padding-bottom: 4px;
+          border-bottom: 2px solid #1f2937;
+          font-size: 14px;
+          font-weight: 600;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          color: #1f2937;
+        "
+      >
+        Top picks
+      </div>
+
+      {{#picks}}
+      <div
+        style="
+          margin-top: 20px;
+          padding: 16px;
+          background-color: #ffffff;
+          border: 1px solid #e5e7eb;
+          border-left: 4px solid #458500;
+        "
+      >
+        <div style="display: block">
+          <a
+            href="{{url}}"
+            target="_blank"
+            style="
+              font-size: 16px;
+              font-weight: 600;
+              color: #1f2937;
+              text-decoration: none;
+            "
+          >{{title}}</a>
+        </div>
+        <div style="margin-top: 6px; font-size: 13px; color: #6b7280">
+          <strong style="color: #111827">{{price_display}}</strong>
+          &middot; Score {{score}}/100
+        </div>
+        <div style="margin-top: 10px; font-size: 14px; color: #1f2937; line-height: 1.5">
+          {{reasoning}}
+        </div>
+        {{#has_flags_text}}
+        <div style="margin-top: 8px; font-size: 13px; color: #92400e">
+          <strong>Flags:</strong> {{flags_text}}
+        </div>
+        {{/has_flags_text}}
+        <div style="margin-top: 12px">
+          <a
+            href="{{url}}"
+            target="_blank"
+            style="
+              display: inline-block;
+              padding: 8px 14px;
+              background-color: #458500;
+              color: #ffffff;
+              text-decoration: none;
+              font-size: 13px;
+              font-weight: 600;
+            "
+          >View product &rarr;</a>
+        </div>
+      </div>
+      {{/picks}}
+      {{/has_picks}}
+
+      {{#has_flags}}
+      <div
+        style="
+          margin-top: 28px;
+          padding-bottom: 4px;
+          border-bottom: 2px solid #f59e0b;
+          font-size: 14px;
+          font-weight: 600;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          color: #92400e;
+        "
+      >
+        Worth knowing
+      </div>
+
+      {{#flagged}}
+      <div
+        style="
+          margin-top: 16px;
+          padding: 14px 16px;
+          background-color: #fffbeb;
+          border: 1px solid #fde68a;
+          border-left: 4px solid #f59e0b;
+        "
+      >
+        <div>
+          <a
+            href="{{url}}"
+            target="_blank"
+            style="
+              font-size: 15px;
+              font-weight: 600;
+              color: #1f2937;
+              text-decoration: none;
+            "
+          >{{title}}</a>
+        </div>
+        <div style="margin-top: 4px; font-size: 13px; color: #6b7280">
+          <strong style="color: #92400e">{{price_display}}</strong>
+          &middot; Score {{score}}/100
+        </div>
+        <div style="margin-top: 8px; font-size: 14px; color: #1f2937; line-height: 1.5">
+          {{reasoning}}
+        </div>
+        {{#has_flags_text}}
+        <div style="margin-top: 8px; font-size: 13px; color: #92400e">
+          <strong>Flags:</strong> {{flags_text}}
+        </div>
+        {{/has_flags_text}}
+      </div>
+      {{/flagged}}
+      {{/has_flags}}
+
+      {{#no_results}}
+      <div style="margin-top: 28px; padding: 18px; background-color: #f9fafb; border: 1px solid #e5e7eb">
+        <div style="font-size: 16px; font-weight: 600; color: #1f2937">No strong picks this round</div>
+        <p style="margin: 8px 0 0; color: #4b5563; line-height: 1.5">
+          ScoutAgent didn't find on-budget, legitimate options for this query.
+          Try broadening the search, raising the budget, or rephrasing what you're looking for.
+        </p>
+      </div>
+      {{/no_results}}
+    </div>
+
+    <div style="padding: 20px 24px 24px; border-top: 1px solid #e5e7eb; margin-top: 24px">
+      <p style="margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.5">
+        Delivered to {{email}}. This is a one-off ScoutAgent report; no further emails will be sent for this request.
+      </p>
+      <p style="margin: 6px 0 0; font-size: 12px; color: #9ca3af">
+        Request ID: <code style="color: #6b7280">{{request_id}}</code>
+      </p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ScoutAgent — autonomous shopping research</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+        color: #1f2937;
+        background: #f5f5f5;
+      }
+      .wrap {
+        max-width: 540px;
+        margin: 0 auto;
+        padding: 56px 20px 80px;
+      }
+      .card {
+        background: #fff;
+        border-top: 6px solid #458500;
+        padding: 32px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 4px;
+        color: #111827;
+      }
+      .lede {
+        margin: 0 0 24px;
+        color: #6b7280;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: #1f2937;
+      }
+      .hint {
+        font-weight: 400;
+        color: #6b7280;
+        margin-left: 4px;
+      }
+      input {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 15px;
+        border: 1px solid #d1d5db;
+        background: #fff;
+        color: #111827;
+        outline: none;
+      }
+      input:focus {
+        border-color: #458500;
+        box-shadow: 0 0 0 2px rgba(69, 133, 0, 0.15);
+      }
+      .field { margin-bottom: 18px; }
+      .field-error {
+        font-size: 12px;
+        color: #b91c1c;
+        margin-top: 6px;
+        display: none;
+      }
+      .field.has-error input { border-color: #b91c1c; }
+      .field.has-error .field-error { display: block; }
+      button[type="submit"] {
+        width: 100%;
+        padding: 12px 16px;
+        font-size: 15px;
+        font-weight: 600;
+        color: #fff;
+        background: #458500;
+        border: 0;
+        cursor: pointer;
+        margin-top: 4px;
+      }
+      button[type="submit"]:hover { background: #3a7000; }
+      button[type="submit"]:disabled { background: #9ca3af; cursor: not-allowed; }
+      .privacy {
+        font-size: 12px;
+        color: #9ca3af;
+        margin: 16px 0 0;
+        line-height: 1.5;
+      }
+      .panel {
+        display: none;
+        padding: 18px;
+        margin-top: 18px;
+        border: 1px solid #e5e7eb;
+      }
+      .panel.success {
+        background: #f0fdf4;
+        border-color: #bbf7d0;
+        color: #14532d;
+      }
+      .panel.error {
+        background: #fef2f2;
+        border-color: #fecaca;
+        color: #991b1b;
+      }
+      .panel.visible { display: block; }
+      .panel strong { display: block; margin-bottom: 4px; }
+      code {
+        background: rgba(0, 0, 0, 0.06);
+        padding: 1px 5px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>ScoutAgent</h1>
+        <p class="lede">
+          Tell ScoutAgent what you're shopping for. It will research the web,
+          read reviews and Reddit, score the options, and email you one curated
+          digest within about two minutes.
+        </p>
+
+        <form id="form" novalidate>
+          <div class="field" data-field="query">
+            <label for="query">What are you looking for?</label>
+            <input
+              id="query"
+              name="query"
+              type="text"
+              required
+              minlength="3"
+              maxlength="200"
+              placeholder="electric bike for daily commute"
+              autocomplete="off"
+            />
+            <div class="field-error">Tell us what to shop for (3–200 characters).</div>
+          </div>
+
+          <div class="field" data-field="max_budget_usd">
+            <label for="budget">Max budget <span class="hint">(USD)</span></label>
+            <input
+              id="budget"
+              name="max_budget_usd"
+              type="number"
+              required
+              min="1"
+              max="100000"
+              placeholder="500"
+            />
+            <div class="field-error">Enter a budget between $1 and $100,000.</div>
+          </div>
+
+          <div class="field" data-field="email">
+            <label for="email">Your email</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              required
+              maxlength="254"
+              placeholder="you@example.com"
+            />
+            <div class="field-error">Enter a valid email address.</div>
+          </div>
+
+          <button type="submit" id="submit">Run research →</button>
+        </form>
+
+        <div class="panel success" id="success">
+          <strong>You're all set.</strong>
+          Your ScoutAgent report should arrive within ~2 minutes. You can close this tab.
+          <div style="margin-top: 8px; font-size: 12px;">
+            Request ID: <code id="request-id"></code>
+          </div>
+        </div>
+
+        <div class="panel error" id="error">
+          <strong>Something went wrong.</strong>
+          <span id="error-message">Please try again.</span>
+        </div>
+
+        <p class="privacy">
+          We use your email and query only to send this one digest. Nothing is stored.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var form = document.getElementById("form");
+        var submit = document.getElementById("submit");
+        var success = document.getElementById("success");
+        var errorPanel = document.getElementById("error");
+        var errorMessage = document.getElementById("error-message");
+        var requestIdEl = document.getElementById("request-id");
+
+        function clearErrors() {
+          var fields = form.querySelectorAll(".field");
+          fields.forEach(function (f) { f.classList.remove("has-error"); });
+          errorPanel.classList.remove("visible");
+        }
+
+        function markField(field, message) {
+          var el = form.querySelector('[data-field="' + field + '"]');
+          if (!el) return;
+          el.classList.add("has-error");
+          if (message) {
+            var msgEl = el.querySelector(".field-error");
+            if (msgEl) msgEl.textContent = message;
+          }
+        }
+
+        function showError(message) {
+          errorMessage.textContent = message;
+          errorPanel.classList.add("visible");
+        }
+
+        form.addEventListener("submit", function (event) {
+          event.preventDefault();
+          clearErrors();
+          submit.disabled = true;
+          submit.textContent = "Submitting…";
+
+          var payload = {
+            query: form.query.value.trim(),
+            max_budget_usd: Number(form.max_budget_usd.value),
+            email: form.email.value.trim(),
+          };
+
+          fetch("/api/research", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+            .then(function (response) {
+              return response.json().then(function (body) {
+                return { status: response.status, body: body };
+              });
+            })
+            .then(function (result) {
+              if (result.status === 202) {
+                form.style.display = "none";
+                requestIdEl.textContent = result.body.request_id || "";
+                success.classList.add("visible");
+              } else if (result.status === 400 && result.body && result.body.field) {
+                markField(result.body.field, result.body.message);
+                submit.disabled = false;
+                submit.textContent = "Run research →";
+              } else {
+                showError(
+                  (result.body && result.body.error) ||
+                    "Server returned " + result.status + ". Please try again."
+                );
+                submit.disabled = false;
+                submit.textContent = "Run research →";
+              }
+            })
+            .catch(function () {
+              showError("Network error. Check your connection and try again.");
+              submit.disabled = false;
+              submit.textContent = "Run research →";
+            });
+        });
+      })();
+    </script>
+  </body>
+</html>

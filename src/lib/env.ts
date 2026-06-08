@@ -10,8 +10,10 @@ const schema = z.object({
 
   SERPAPI_KEY: z.string().min(1),
 
-  SENDGRID_API_KEY: z.string().min(1),
-  EMAIL_FROM: z.string().email(),
+  EMAIL_JS_SERVICE_ID: z.string().min(1),
+  EMAIL_JS_TEMPLATE: z.string().min(1),
+  EMAIL_JS_API_KEY: z.string().min(1),
+  EMAIL_JS_PRIVATE_KEY: z.string().min(1).optional(),
 
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('debug'),
