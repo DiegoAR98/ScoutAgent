@@ -78,6 +78,49 @@ export async function fetchAndExtract(url: string): Promise<FetchedPage> {
   };
 }
 
+export interface UrlVerifyResult {
+  url: string;
+  ok: boolean;
+  statusCode: number | null;
+  finalUrl: string;
+}
+
+// Lightweight liveness check used to drop dead links before the digest is
+// rendered. Tries HEAD first (cheap); if the origin doesn't allow HEAD,
+// falls back to a short GET. Accepts any 2xx/3xx as "ok"; everything else
+// (4xx, 5xx, timeouts, network errors) is treated as a dead link.
+export async function verifyUrlLive(url: string, timeoutMs = 6000): Promise<UrlVerifyResult> {
+  const head = await tryOnce(url, 'HEAD', timeoutMs);
+  if (head.statusCode != null && head.ok) return head;
+  // Some sites (e.g., Amazon, Cloudflare-fronted) reject HEAD with 403/405.
+  // Confirm with a GET before declaring the URL dead.
+  if (head.statusCode === 403 || head.statusCode === 405 || head.statusCode == null) {
+    return tryOnce(url, 'GET', timeoutMs);
+  }
+  return head;
+}
+
+async function tryOnce(url: string, method: 'HEAD' | 'GET', timeoutMs: number): Promise<UrlVerifyResult> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method,
+      signal: ctrl.signal,
+      headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml' },
+      redirect: 'follow',
+    });
+    res.body?.cancel().catch(() => {});
+    const statusCode = res.status;
+    const ok = statusCode >= 200 && statusCode < 400;
+    return { url, ok, statusCode, finalUrl: res.url || url };
+  } catch {
+    return { url, ok: false, statusCode: null, finalUrl: url };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 function extractReadable(html: string, baseUrl: string): { title: string; text: string; byline?: string } {
   try {
     const dom = new JSDOM(html, { url: baseUrl });

@@ -10,13 +10,14 @@
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import { getTarsClient, getTarsModel } from './tarsClient.js';
 import { serpapiSearch } from '../search/serpapi.js';
-import { fetchAndExtract, FetchError } from '../fetch/fetcher.js';
+import { fetchAndExtract, verifyUrlLive, FetchError } from '../fetch/fetcher.js';
 import { digestSchema, type Digest } from './schema.js';
 import { logger } from '../../lib/logger.js';
 
 const MAX_ITERATIONS = 12;
 const MAX_SEARCH_CALLS = 4;
 const MAX_FETCH_CALLS = 8;
+const MIN_FETCHES_BEFORE_RECORD = 2;
 
 export interface AlertInput {
   query: string;
@@ -104,9 +105,15 @@ const systemPrompt = `You are ScoutAgent, an autonomous shopping researcher. Giv
 PROCESS
 1. Start with a broad serpapi_search to find products in the price range.
 2. Run a second serpapi_search with source="reddit" to gather community sentiment.
-3. Use fetch_url on the 3–6 most promising results — product pages, review articles, top Reddit threads.
+3. Use fetch_url on the 3–6 most promising results — product pages, review articles, top Reddit threads. You MUST call fetch_url at least ${MIN_FETCHES_BEFORE_RECORD} times before calling record_candidates; the orchestrator enforces this.
 4. Score each viable candidate against the rubric. Discard candidates that fall short.
 5. Call record_candidates EXACTLY ONCE with your final shortlist and a short scout_note. Then stop.
+
+URL RULES (strict — enforced by the orchestrator)
+- Every URL in record_candidates MUST be a URL that appeared in serpapi_search results or that you passed to fetch_url during THIS run.
+- Do NOT invent URLs from memory. Do NOT guess product URLs.
+- Do NOT modify URLs (no truncating, no removing query params, no swapping domains). Paste them EXACTLY as the tool returned them.
+- Prefer URLs you have actually fetched and read — those are the ones you have evidence for.
 
 SCORING RUBRIC (0–100, weighted)
 - Brand legitimacy: 25
@@ -144,6 +151,7 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
   ];
 
   const counts = { search: 0, fetch: 0, record: 0 };
+  const seenUrls = new Set<string>();
   let tokensIn = 0;
   let tokensOut = 0;
   let final: Digest | undefined;
@@ -198,6 +206,7 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
         const source = args['source'] === 'reddit' ? 'reddit' : 'web';
         try {
           const results = await serpapiSearch(query, source === 'reddit' ? { redditOnly: true } : {});
+          for (const r of results) if (r.url) seenUrls.add(r.url);
           messages.push({
             role: 'tool',
             tool_call_id: tc.id,
@@ -215,8 +224,10 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
         counts.fetch++;
         const urlArg = args['url'];
         const url = typeof urlArg === 'string' ? urlArg : '';
+        if (url) seenUrls.add(url);
         try {
           const page = await fetchAndExtract(url);
+          if (page.finalUrl) seenUrls.add(page.finalUrl);
           messages.push({
             role: 'tool',
             tool_call_id: tc.id,
@@ -229,6 +240,21 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
         }
       } else if (name === 'record_candidates') {
         counts.record++;
+
+        // Gate A: must have actually opened pages before recording.
+        if (counts.fetch < MIN_FETCHES_BEFORE_RECORD) {
+          if (counts.record >= 2) {
+            throw new Error(`record_candidates called with insufficient fetches (${counts.fetch} < ${MIN_FETCHES_BEFORE_RECORD}) after retry`);
+          }
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: `error: you must call fetch_url at least ${MIN_FETCHES_BEFORE_RECORD} times before recording candidates. You have fetched ${counts.fetch} so far. Fetch the most promising results, then call record_candidates again.`,
+          });
+          continue;
+        }
+
+        // Gate B: schema.
         const parsed = digestSchema.safeParse(args);
         if (!parsed.success) {
           if (counts.record >= 2) {
@@ -242,6 +268,23 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
           });
           continue;
         }
+
+        // Gate C: every URL must have been surfaced by a tool during this run.
+        const unknownUrls = parsed.data.candidates
+          .map((c) => c.url)
+          .filter((u) => !seenUrls.has(u));
+        if (unknownUrls.length > 0) {
+          if (counts.record >= 2) {
+            throw new Error(`record_candidates referenced unknown URLs after retry: ${unknownUrls.join(', ')}`);
+          }
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: `error: these URLs were never returned by serpapi_search or fetch_url during this run: ${unknownUrls.join(', ')}. Replace them with URLs you have actually seen from the tool outputs and re-call record_candidates.`,
+          });
+          continue;
+        }
+
         messages.push({ role: 'tool', tool_call_id: tc.id, content: 'ok' });
         final = parsed.data;
         logger.info({ iter, candidates: final.candidates.length }, 'agent.record');
@@ -252,8 +295,9 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
     }
 
     if (final) {
+      const verified = await pruneDeadLinks(final);
       return {
-        digest: final,
+        digest: verified,
         iterations: iter,
         toolCalls: counts,
         tokensIn,
@@ -263,4 +307,28 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
   }
 
   throw new Error(`Agent did not finish within ${MAX_ITERATIONS} iterations`);
+}
+
+// HEAD/GET-checks each candidate URL with a short timeout and drops any
+// that 404, time out, or otherwise fail to load. Prevents the digest from
+// shipping broken links — the most common demo killer.
+async function pruneDeadLinks(digest: Digest): Promise<Digest> {
+  if (digest.candidates.length === 0) return digest;
+  const checks = await Promise.all(digest.candidates.map((c) => verifyUrlLive(c.url)));
+  const alive: Digest['candidates'] = [];
+  const dropped: Array<{ url: string; status: number | null }> = [];
+  for (let i = 0; i < digest.candidates.length; i++) {
+    const candidate = digest.candidates[i];
+    const check = checks[i];
+    if (!candidate || !check) continue;
+    if (check.ok) {
+      alive.push(candidate);
+    } else {
+      dropped.push({ url: candidate.url, status: check.statusCode });
+    }
+  }
+  if (dropped.length > 0) {
+    logger.warn({ dropped }, 'agent.url_verify.dead_links');
+  }
+  return { ...digest, candidates: alive };
 }
