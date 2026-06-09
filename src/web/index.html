@@ -4,202 +4,742 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ScoutAgent — autonomous shopping research</title>
+    <meta
+      name="description"
+      content="Tell ScoutAgent what you're shopping for. It reads the reviews, the Reddit threads, and the price history, then emails you one scored shortlist."
+    />
+    <meta name="theme-color" content="#1c4a27" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231c4a27'/%3E%3Cpath d='M16 6l7 10-7 10-7-10z' fill='%23a9d977'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
     <style>
-      * { box-sizing: border-box; }
-      html, body {
+      :root {
+        --paper: #f6f5ef;
+        --paper-2: #efeee4;
+        --ink: #15301c;
+        --ink-soft: #3f4a3f;
+        --muted: #6f7567;
+        --green: #458500;
+        --green-deep: #1c4a27;
+        --green-deep-hover: #16401f;
+        --sage: #e8eddf;
+        --sage-line: #d7dec9;
+        --card: #ffffff;
+        --line: #e4e1d6;
+        --input-line: #ccd1c0;
+        --danger: #9c2f1f;
+        --danger-bg: #fbf1ee;
+        --danger-line: #ecccc3;
+        --ok: #1c4a27;
+        --ok-bg: #eef4e7;
+        --ok-line: #cfe0bb;
+        --radius: 14px;
+        --radius-sm: 10px;
+        --shadow: 0 1px 2px rgba(20, 40, 18, 0.05),
+          0 18px 40px -18px rgba(20, 45, 18, 0.28);
+        --shadow-sm: 0 1px 2px rgba(20, 40, 18, 0.05),
+          0 8px 22px -14px rgba(20, 45, 18, 0.22);
+        --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+        --font-body: "Hanken Grotesk", -apple-system, BlinkMacSystemFont,
+          "Segoe UI", Roboto, system-ui, sans-serif;
+        --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono",
+          Menlo, Consolas, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
         margin: 0;
         padding: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
-        color: #1f2937;
-        background: #f5f5f5;
       }
-      .wrap {
-        max-width: 540px;
+
+      body {
+        font-family: var(--font-body);
+        color: var(--ink-soft);
+        background-color: var(--paper);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        min-height: 100vh;
+        position: relative;
+      }
+
+      /* Atmosphere: soft green glow + fine grain, behind everything */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -2;
+        background:
+          radial-gradient(
+            120% 80% at 50% -10%,
+            rgba(118, 168, 56, 0.18) 0%,
+            rgba(118, 168, 56, 0) 55%
+          ),
+          radial-gradient(
+            90% 60% at 100% 110%,
+            rgba(28, 74, 39, 0.08) 0%,
+            rgba(28, 74, 39, 0) 60%
+          ),
+          var(--paper);
+      }
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        opacity: 0.5;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+        mix-blend-mode: multiply;
+      }
+
+      .shell {
+        max-width: 600px;
         margin: 0 auto;
-        padding: 56px 20px 80px;
+        padding: 28px 22px 64px;
       }
-      .card {
-        background: #fff;
-        border-top: 6px solid #458500;
-        padding: 32px;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+
+      /* ---------- top bar ---------- */
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 6px 2px 0;
+      }
+      .wordmark {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 19px;
+        letter-spacing: -0.01em;
+        color: var(--ink);
+      }
+      .wordmark .gem {
+        width: 16px;
+        height: 16px;
+        flex: none;
+        transform: rotate(0deg);
+        color: var(--green);
+      }
+      .tagline {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      /* ---------- hero ---------- */
+      .hero {
+        padding: 52px 0 30px;
+        text-align: center;
+      }
+      .eyebrow {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--green);
+        margin: 0 0 18px;
       }
       h1 {
-        font-size: 22px;
-        margin: 0 0 4px;
-        color: #111827;
+        font-family: var(--font-display);
+        font-optical-sizing: auto;
+        font-weight: 500;
+        font-size: clamp(2.05rem, 7.2vw, 3.1rem);
+        line-height: 1.04;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+        margin: 0 auto;
+        max-width: 14ch;
       }
-      .lede {
-        margin: 0 0 24px;
-        color: #6b7280;
-        font-size: 14px;
-        line-height: 1.5;
+      h1 em {
+        font-style: italic;
+        font-weight: 500;
+        color: var(--green);
+      }
+      .subhead {
+        margin: 20px auto 0;
+        max-width: 46ch;
+        font-size: 16px;
+        line-height: 1.62;
+        color: var(--ink-soft);
+      }
+
+      /* ---------- card ---------- */
+      .card {
+        position: relative;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 30px 30px 28px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+      .card::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 3px;
+        background: linear-gradient(90deg, var(--green-deep), var(--green));
+      }
+
+      .field {
+        margin-bottom: 18px;
       }
       label {
         display: block;
         font-size: 13px;
         font-weight: 600;
-        margin-bottom: 6px;
-        color: #1f2937;
+        margin-bottom: 7px;
+        color: var(--ink);
+        letter-spacing: -0.005em;
       }
-      .hint {
+      label .hint {
+        font-family: var(--font-mono);
         font-weight: 400;
-        color: #6b7280;
-        margin-left: 4px;
+        font-size: 10.5px;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+        margin-left: 6px;
+        vertical-align: 1px;
       }
+
       input {
         width: 100%;
-        padding: 10px 12px;
+        padding: 12px 14px;
+        font-family: var(--font-body);
         font-size: 15px;
-        border: 1px solid #d1d5db;
-        background: #fff;
-        color: #111827;
+        color: var(--ink);
+        background: #fcfcfa;
+        border: 1px solid var(--input-line);
+        border-radius: var(--radius-sm);
         outline: none;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease,
+          background 0.15s ease;
+      }
+      input::placeholder {
+        color: #a6ab9d;
+      }
+      input:hover {
+        border-color: #b9c0ab;
       }
       input:focus {
-        border-color: #458500;
-        box-shadow: 0 0 0 2px rgba(69, 133, 0, 0.15);
+        border-color: var(--green);
+        background: #fff;
+        box-shadow: 0 0 0 3px rgba(69, 133, 0, 0.16);
       }
-      .field { margin-bottom: 18px; }
+
+      .adorn {
+        position: relative;
+      }
+      .adorn-sym {
+        position: absolute;
+        left: 14px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 15px;
+        color: var(--muted);
+        pointer-events: none;
+      }
+      input.has-adorn {
+        padding-left: 27px;
+      }
+
       .field-error {
-        font-size: 12px;
-        color: #b91c1c;
-        margin-top: 6px;
+        font-size: 12.5px;
+        color: var(--danger);
+        margin-top: 7px;
         display: none;
       }
-      .field.has-error input { border-color: #b91c1c; }
-      .field.has-error .field-error { display: block; }
+      .field.has-error input {
+        border-color: var(--danger);
+        background: #fff;
+      }
+      .field.has-error input:focus {
+        box-shadow: 0 0 0 3px rgba(156, 47, 31, 0.14);
+      }
+      .field.has-error .field-error {
+        display: block;
+      }
+
       button[type="submit"] {
+        position: relative;
         width: 100%;
-        padding: 12px 16px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 6px;
+        padding: 14px 18px;
+        font-family: var(--font-body);
         font-size: 15px;
         font-weight: 600;
+        letter-spacing: 0.005em;
         color: #fff;
-        background: #458500;
+        background: var(--green-deep);
         border: 0;
+        border-radius: var(--radius-sm);
         cursor: pointer;
-        margin-top: 4px;
+        box-shadow: 0 10px 22px -12px rgba(28, 74, 39, 0.7);
+        transition: background 0.18s ease, transform 0.18s ease,
+          box-shadow 0.18s ease;
       }
-      button[type="submit"]:hover { background: #3a7000; }
-      button[type="submit"]:disabled { background: #9ca3af; cursor: not-allowed; }
-      .privacy {
+      button[type="submit"] .arrow {
+        transition: transform 0.18s ease;
+      }
+      button[type="submit"]:hover {
+        background: var(--green-deep-hover);
+        transform: translateY(-1px);
+        box-shadow: 0 16px 28px -14px rgba(28, 74, 39, 0.75);
+      }
+      button[type="submit"]:hover .arrow {
+        transform: translateX(3px);
+      }
+      button[type="submit"]:active {
+        transform: translateY(0);
+      }
+      button[type="submit"]:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(69, 133, 0, 0.35);
+      }
+      button[type="submit"]:disabled {
+        background: #9aa18f;
+        box-shadow: none;
+        transform: none;
+        cursor: not-allowed;
+      }
+      button[type="submit"]:disabled .arrow {
+        transform: none;
+      }
+
+      .privacy-inline {
+        margin: 16px 2px 0;
         font-size: 12px;
-        color: #9ca3af;
-        margin: 16px 0 0;
-        line-height: 1.5;
+        line-height: 1.55;
+        color: var(--muted);
+        text-align: center;
       }
+
+      /* ---------- result panels ---------- */
       .panel {
         display: none;
-        padding: 18px;
-        margin-top: 18px;
-        border: 1px solid #e5e7eb;
+        position: relative;
+        margin-top: 16px;
+        padding: 22px 24px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--card);
+        box-shadow: var(--shadow-sm);
+      }
+      .panel.visible {
+        display: block;
+        animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+      }
+      .panel .panel-head {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        margin-bottom: 8px;
+      }
+      .panel .badge {
+        width: 30px;
+        height: 30px;
+        flex: none;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+      }
+      .panel .badge svg {
+        width: 16px;
+        height: 16px;
+      }
+      .panel strong {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 17px;
+        letter-spacing: -0.01em;
+      }
+      .panel p {
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.6;
       }
       .panel.success {
-        background: #f0fdf4;
-        border-color: #bbf7d0;
-        color: #14532d;
+        border-color: var(--ok-line);
+      }
+      .panel.success .badge {
+        background: var(--ok-bg);
+        color: var(--ok);
+      }
+      .panel.success strong {
+        color: var(--ok);
       }
       .panel.error {
-        background: #fef2f2;
-        border-color: #fecaca;
-        color: #991b1b;
+        border-color: var(--danger-line);
       }
-      .panel.visible { display: block; }
-      .panel strong { display: block; margin-bottom: 4px; }
-      code {
-        background: rgba(0, 0, 0, 0.06);
-        padding: 1px 5px;
+      .panel.error .badge {
+        background: var(--danger-bg);
+        color: var(--danger);
+      }
+      .panel.error strong {
+        color: var(--danger);
+      }
+      .req {
+        margin-top: 14px;
         font-size: 12px;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .req code {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--ink);
+        background: var(--paper-2);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 3px 8px;
+      }
+      .again {
+        margin-top: 16px;
+      }
+      .again a {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--green-deep);
+        text-decoration: none;
+        border-bottom: 1px solid rgba(28, 74, 39, 0.3);
+        padding-bottom: 1px;
+      }
+      .again a:hover {
+        border-bottom-color: var(--green-deep);
+      }
+
+      /* ---------- how it works ---------- */
+      .how {
+        margin-top: 40px;
+        padding: 28px 28px 24px;
+        background: var(--sage);
+        border: 1px solid var(--sage-line);
+        border-radius: var(--radius);
+      }
+      .how .eyebrow {
+        margin-bottom: 18px;
+        color: var(--green-deep);
+      }
+      .steps {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px 28px;
+      }
+      .steps li {
+        display: flex;
+        gap: 13px;
+        padding: 13px 0;
+        border-top: 1px solid var(--sage-line);
+      }
+      .steps li:nth-child(1),
+      .steps li:nth-child(2) {
+        border-top: 0;
+      }
+      .steps .num {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--green);
+        padding-top: 2px;
+        flex: none;
+      }
+      .steps .body b {
+        display: block;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--ink);
+        margin-bottom: 2px;
+        letter-spacing: -0.005em;
+      }
+      .steps .body span {
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+
+      /* ---------- footer ---------- */
+      footer {
+        margin-top: 30px;
+        text-align: center;
+      }
+      footer .privacy {
+        font-size: 12.5px;
+        line-height: 1.6;
+        color: var(--muted);
+        margin: 0 auto;
+        max-width: 42ch;
+      }
+      footer .credit {
+        margin-top: 12px;
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #9aa090;
+      }
+
+      /* ---------- entrance ---------- */
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .reveal {
+        opacity: 0;
+        animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+      }
+
+      @media (max-width: 560px) {
+        .hero {
+          padding: 40px 0 26px;
+        }
+        .card {
+          padding: 26px 22px 24px;
+        }
+        .steps {
+          grid-template-columns: 1fr;
+        }
+        .steps li:nth-child(2) {
+          border-top: 1px solid var(--sage-line);
+        }
+        .tagline {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .reveal,
+        .panel.visible {
+          opacity: 1;
+          animation: none;
+        }
+        * {
+          transition: none !important;
+        }
       }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <div class="card">
-        <h1>ScoutAgent</h1>
-        <p class="lede">
-          Tell ScoutAgent what you're shopping for. It will research the web,
-          read reviews and Reddit, score the options, and email you one curated
-          digest within about two minutes.
-        </p>
+    <div class="shell">
+      <header class="topbar reveal" style="animation-delay: 0.05s">
+        <span class="wordmark">
+          <svg class="gem" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 2l9 13-9 7-9-7z" />
+          </svg>
+          ScoutAgent
+        </span>
+        <span class="tagline">one request · one report</span>
+      </header>
 
-        <form id="form" novalidate>
-          <div class="field" data-field="query">
-            <label for="query">What are you looking for?</label>
-            <input
-              id="query"
-              name="query"
-              type="text"
-              required
-              minlength="3"
-              maxlength="200"
-              placeholder="electric bike for daily commute"
-              autocomplete="off"
-            />
-            <div class="field-error">Tell us what to shop for (3–200 characters).</div>
+      <main>
+        <section class="hero">
+          <p class="eyebrow reveal" style="animation-delay: 0.12s">
+            Autonomous shopping research
+          </p>
+          <h1 class="reveal" style="animation-delay: 0.2s">
+            Stop drowning in 91&nbsp;million <em>search results</em>.
+          </h1>
+          <p class="subhead reveal" style="animation-delay: 0.3s">
+            Tell ScoutAgent what you're shopping for. It reads the reviews, the
+            Reddit threads, and the price history — then emails you one scored
+            shortlist. Usually within two minutes.
+          </p>
+        </section>
+
+        <section class="reveal" style="animation-delay: 0.4s">
+          <form id="form" class="card" novalidate>
+            <div class="field" data-field="query">
+              <label for="query">What are you looking for?</label>
+              <input
+                id="query"
+                name="query"
+                type="text"
+                required
+                minlength="3"
+                maxlength="200"
+                placeholder="electric bike for daily commute"
+                autocomplete="off"
+              />
+              <div class="field-error">
+                Tell us what to shop for (3–200 characters).
+              </div>
+            </div>
+
+            <div class="field" data-field="max_budget_usd">
+              <label for="budget">Max budget <span class="hint">USD</span></label>
+              <div class="adorn">
+                <span class="adorn-sym" aria-hidden="true">$</span>
+                <input
+                  id="budget"
+                  name="max_budget_usd"
+                  class="has-adorn"
+                  type="number"
+                  required
+                  min="1"
+                  max="100000"
+                  placeholder="500"
+                />
+              </div>
+              <div class="field-error">
+                Enter a budget between $1 and $100,000.
+              </div>
+            </div>
+
+            <div class="field" data-field="email">
+              <label for="email">Where should we send the digest?</label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                required
+                maxlength="254"
+                placeholder="you@example.com"
+              />
+              <div class="field-error">Enter a valid email address.</div>
+            </div>
+
+            <button type="submit" id="submit">
+              <span id="submit-label">Run research</span>
+              <span class="arrow" aria-hidden="true">→</span>
+            </button>
+
+            <p class="privacy-inline">
+              Free. No account. We email you once and store nothing.
+            </p>
+          </form>
+
+          <div class="panel success" id="success" role="status">
+            <div class="panel-head">
+              <span class="badge" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+              </span>
+              <strong>Your scout is on it.</strong>
+            </div>
+            <p>
+              Your ScoutAgent report should land in your inbox within about two
+              minutes. You can close this tab — we'll do the rest.
+            </p>
+            <div class="req">
+              Request ID <code id="request-id"></code>
+            </div>
+            <div class="again">
+              <a href="/">Scout something else →</a>
+            </div>
           </div>
 
-          <div class="field" data-field="max_budget_usd">
-            <label for="budget">Max budget <span class="hint">(USD)</span></label>
-            <input
-              id="budget"
-              name="max_budget_usd"
-              type="number"
-              required
-              min="1"
-              max="100000"
-              placeholder="500"
-            />
-            <div class="field-error">Enter a budget between $1 and $100,000.</div>
+          <div class="panel error" id="error" role="alert">
+            <div class="panel-head">
+              <span class="badge" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 8v5M12 16.5v.5" />
+                  <circle cx="12" cy="12" r="9" />
+                </svg>
+              </span>
+              <strong>Something went wrong.</strong>
+            </div>
+            <p id="error-message">Please try again.</p>
           </div>
+        </section>
 
-          <div class="field" data-field="email">
-            <label for="email">Your email</label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              required
-              maxlength="254"
-              placeholder="you@example.com"
-            />
-            <div class="field-error">Enter a valid email address.</div>
-          </div>
+        <section class="how reveal" style="animation-delay: 0.55s">
+          <p class="eyebrow">How it works</p>
+          <ol class="steps">
+            <li>
+              <span class="num">01</span>
+              <span class="body">
+                <b>Search the web &amp; Reddit</b>
+                <span>Google results plus real community threads.</span>
+              </span>
+            </li>
+            <li>
+              <span class="num">02</span>
+              <span class="body">
+                <b>Read the actual reviews</b>
+                <span>It opens the pages and extracts the substance.</span>
+              </span>
+            </li>
+            <li>
+              <span class="num">03</span>
+              <span class="body">
+                <b>Score against a rubric</b>
+                <span>Legitimacy, sentiment, price fit, safety flags.</span>
+              </span>
+            </li>
+            <li>
+              <span class="num">04</span>
+              <span class="body">
+                <b>Email you the shortlist</b>
+                <span>One curated digest with verified links.</span>
+              </span>
+            </li>
+          </ol>
+        </section>
+      </main>
 
-          <button type="submit" id="submit">Run research →</button>
-        </form>
-
-        <div class="panel success" id="success">
-          <strong>You're all set.</strong>
-          Your ScoutAgent report should arrive within ~2 minutes. You can close this tab.
-          <div style="margin-top: 8px; font-size: 12px;">
-            Request ID: <code id="request-id"></code>
-          </div>
-        </div>
-
-        <div class="panel error" id="error">
-          <strong>Something went wrong.</strong>
-          <span id="error-message">Please try again.</span>
-        </div>
-
+      <footer class="reveal" style="animation-delay: 0.65s">
         <p class="privacy">
-          We use your email and query only to send this one digest. Nothing is stored.
+          We use your email and query only to send this one digest. Nothing is
+          stored, and your address is never shared.
         </p>
-      </div>
+        <p class="credit">Built for the Tetrate AI Agent Buildathon</p>
+      </footer>
     </div>
 
     <script>
       (function () {
         var form = document.getElementById("form");
         var submit = document.getElementById("submit");
+        var submitLabel = document.getElementById("submit-label");
         var success = document.getElementById("success");
         var errorPanel = document.getElementById("error");
         var errorMessage = document.getElementById("error-message");
         var requestIdEl = document.getElementById("request-id");
 
+        function setLabel(text) {
+          submitLabel.textContent = text;
+        }
+
         function clearErrors() {
           var fields = form.querySelectorAll(".field");
-          fields.forEach(function (f) { f.classList.remove("has-error"); });
+          fields.forEach(function (f) {
+            f.classList.remove("has-error");
+          });
           errorPanel.classList.remove("visible");
         }
 
@@ -218,11 +758,16 @@
           errorPanel.classList.add("visible");
         }
 
+        function resetButton() {
+          submit.disabled = false;
+          setLabel("Run research");
+        }
+
         form.addEventListener("submit", function (event) {
           event.preventDefault();
           clearErrors();
           submit.disabled = true;
-          submit.textContent = "Submitting…";
+          setLabel("Submitting…");
 
           var payload = {
             query: form.query.value.trim(),
@@ -243,25 +788,27 @@
             .then(function (result) {
               if (result.status === 202) {
                 form.style.display = "none";
-                requestIdEl.textContent = result.body.request_id || "";
+                requestIdEl.textContent = result.body.request_id || "—";
                 success.classList.add("visible");
-              } else if (result.status === 400 && result.body && result.body.field) {
+                success.scrollIntoView({ behavior: "smooth", block: "center" });
+              } else if (
+                result.status === 400 &&
+                result.body &&
+                result.body.field
+              ) {
                 markField(result.body.field, result.body.message);
-                submit.disabled = false;
-                submit.textContent = "Run research →";
+                resetButton();
               } else {
                 showError(
                   (result.body && result.body.error) ||
                     "Server returned " + result.status + ". Please try again."
                 );
-                submit.disabled = false;
-                submit.textContent = "Run research →";
+                resetButton();
               }
             })
             .catch(function () {
               showError("Network error. Check your connection and try again.");
-              submit.disabled = false;
-              submit.textContent = "Run research →";
+              resetButton();
             });
         });
       })();
