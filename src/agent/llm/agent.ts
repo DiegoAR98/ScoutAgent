@@ -12,6 +12,7 @@ import { getTarsClient, getTarsModel } from './tarsClient.js';
 import { serpapiSearch } from '../search/serpapi.js';
 import { fetchAndExtract, verifyUrlLive, FetchError } from '../fetch/fetcher.js';
 import { digestSchema, type Digest } from './schema.js';
+import { findDuplicateUrls, dedupeCandidatesByUrl } from './candidates.js';
 import { logger } from '../../lib/logger.js';
 
 const MAX_ITERATIONS = 12;
@@ -79,7 +80,7 @@ const tools: ChatCompletionTool[] = [
               type: 'object',
               properties: {
                 title: { type: 'string' },
-                url: { type: 'string' },
+                url: { type: 'string', description: "This product's OWN page — a retailer/product listing or the single review/thread specific to it. Must be UNIQUE across candidates. Never a 'best of' roundup, listicle, or search-results URL." },
                 price_usd: { type: ['number', 'null'] },
                 score: { type: 'number', minimum: 0, maximum: 100 },
                 verdict: { type: 'string', enum: ['recommend', 'flag', 'reject'] },
@@ -114,6 +115,7 @@ URL RULES (strict — enforced by the orchestrator)
 - Do NOT invent URLs from memory. Do NOT guess product URLs.
 - Do NOT modify URLs (no truncating, no removing query params, no swapping domains). Paste them EXACTLY as the tool returned them.
 - Prefer URLs you have actually fetched and read — those are the ones you have evidence for.
+- Each candidate's url MUST point to that ONE product's own page (a retailer/product listing, or the single review/thread about that product). NEVER use a "best of"/roundup/listicle URL or a generic search-results page as a candidate url, and NEVER reuse the same url for two candidates — every candidate needs its OWN distinct url. If your evidence came from a roundup, run another search for the specific product to find its own page, then record that. Cite roundups in sources_considered, never in url.
 
 SCORING RUBRIC (0–100, weighted)
 - Brand legitimacy: 25
@@ -285,6 +287,21 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
           continue;
         }
 
+        // Gate D: each candidate must link to its own distinct page. Reusing
+        // one roundup/listicle or search-results URL across candidates is the
+        // #1 quality bug (every pick links to the same "best of" article).
+        const dupeUrls = findDuplicateUrls(parsed.data.candidates);
+        if (dupeUrls.length > 0 && counts.record < 2) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: `error: each candidate must link to its OWN distinct page, but you reused ${dupeUrls.join(', ')} for more than one candidate. Those look like "best of" roundups or search-results pages, not a single product. For each affected product, search for that product by name and use its own page (a retailer/product listing, or the specific review/thread about that one product). Re-call record_candidates with a unique url per candidate.`,
+          });
+          continue;
+        }
+        // If duplicates somehow survive the retry, the dedupe safety net on
+        // return collapses them so the user never sees a repeated link.
+
         messages.push({ role: 'tool', tool_call_id: tc.id, content: 'ok' });
         final = parsed.data;
         logger.info({ iter, candidates: final.candidates.length }, 'agent.record');
@@ -295,7 +312,8 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
     }
 
     if (final) {
-      const verified = await pruneDeadLinks(final);
+      const deduped = dedupeCandidatesByUrl(final);
+      const verified = await pruneDeadLinks(deduped);
       return {
         digest: verified,
         iterations: iter,

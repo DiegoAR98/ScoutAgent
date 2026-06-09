@@ -5,7 +5,9 @@ import tsparser from '@typescript-eslint/parser';
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '**/*.d.ts'],
+    // Test files are excluded from tsconfig (the typed project), so the
+    // type-checked rules can't resolve them — lint them out here to match.
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '**/*.d.ts', '**/*.test.ts'],
   },
   {
     files: ['src/**/*.ts'],
