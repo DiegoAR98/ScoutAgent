@@ -21,7 +21,7 @@ That is research work. Agents are good at research work. ScoutAgent does it.
 1. User opens the form and submits `{ query, max_budget_usd, email }`.
 2. Server returns `202 Accepted` immediately with a `request_id`.
 3. A background task runs the agent loop:
-   - 1–2 `serpapi_search` calls (Google web + `site:reddit.com`)
+   - 2–6 `serpapi_search` calls (Google web + `site:reddit.com` + one per shortlisted product to find its own page)
    - 2–6 `fetch_url` calls against the most promising results
    - LLM reasons over the extracted text, scores each candidate against the rubric, and emits a structured shortlist via the `record_candidates` tool
    - Recommended URLs are HEAD/GET-verified; explicit 404s and 410s are dropped
@@ -128,11 +128,12 @@ template.html         The digest template; mirror this in your EmailJS dashboard
 
 ### Anti-hallucination guardrails
 
-The orchestrator enforces three rules around the `record_candidates` tool call. Each runs as a separate gate; if any fails, the model gets a repair message and one retry.
+The orchestrator enforces four rules around the `record_candidates` tool call. Each runs as a separate gate with its own retry allowance; if a gate fails, the model gets a repair message describing exactly what to fix.
 
 1. **Fetch gate.** The model must call `fetch_url` at least twice before it's allowed to record findings. Prevents recording based on SerpAPI snippets alone.
 2. **URL allowlist.** Every URL in the shortlist must have appeared in a tool output during this run (either a `serpapi_search` result or a URL passed to `fetch_url`). Prevents the model from inventing product URLs from memory.
-3. **Liveness check.** After parsing the shortlist, each URL is verified with a 3–6 s HEAD (falling back to GET). URLs returning explicit `404` or `410` are dropped. Bot-detection `403`/`503`, rate limits, and timeouts keep the URL — a real browser will likely still load it.
+3. **URL quality gate.** Every candidate must link to its own distinct page. URLs are compared in normalized form (fragments and tracking params stripped), so `#anchor` variants of one page count as the same URL; roundup/"best of"/search-results URLs are rejected as candidate links (they belong in `sources_considered`). On failure the model gets a repair message with a raised search budget so it can look up each product's own page. Any duplicates that survive the retries are collapsed to the best-scoring candidate per page before sending.
+4. **Liveness check.** After parsing the shortlist, each URL is verified with a 3–6 s HEAD (falling back to GET). URLs returning explicit `404` or `410` are dropped. Bot-detection `403`/`503`, rate limits, and timeouts keep the URL — a real browser will likely still load it.
 
 If pruning leaves zero recommended candidates, the empty-state digest is sent rather than skipping silently.
 

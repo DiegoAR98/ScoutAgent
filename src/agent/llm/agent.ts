@@ -12,13 +12,19 @@ import { getTarsClient, getTarsModel } from './tarsClient.js';
 import { serpapiSearch } from '../search/serpapi.js';
 import { fetchAndExtract, verifyUrlLive, FetchError } from '../fetch/fetcher.js';
 import { digestSchema, type Digest } from './schema.js';
-import { findDuplicateUrls, dedupeCandidatesByUrl } from './candidates.js';
+import { findDuplicateUrls, dedupeCandidatesByUrl, isGenericListUrl, preferProductPages } from './candidates.js';
 import { logger } from '../../lib/logger.js';
 
-const MAX_ITERATIONS = 12;
-const MAX_SEARCH_CALLS = 4;
+const MAX_ITERATIONS = 20;
+const MAX_SEARCH_CALLS = 6;
 const MAX_FETCH_CALLS = 8;
 const MIN_FETCHES_BEFORE_RECORD = 2;
+// Gate D (URL quality) gets its own retry allowance: finding each product's
+// own page may take one search per candidate, so one repair is often not
+// enough when the first shortlist leaned on a single roundup.
+const MAX_URL_QUALITY_REPAIRS = 2;
+// Hard stop on record_candidates attempts across all gates (A..D repairs + final).
+const MAX_RECORD_ATTEMPTS = 6;
 
 export interface AlertInput {
   query: string;
@@ -80,7 +86,7 @@ const tools: ChatCompletionTool[] = [
               type: 'object',
               properties: {
                 title: { type: 'string' },
-                url: { type: 'string', description: "This product's OWN page — a retailer/product listing or the single review/thread specific to it. Must be UNIQUE across candidates. Never a 'best of' roundup, listicle, or search-results URL." },
+                url: { type: 'string', description: "This product's OWN page — a retailer/product listing or the single review/thread specific to it. Must be UNIQUE across candidates (URLs differing only by #fragment count as the same page). Never a 'best of' roundup, listicle, or search-results URL." },
                 price_usd: { type: ['number', 'null'] },
                 score: { type: 'number', minimum: 0, maximum: 100 },
                 verdict: { type: 'string', enum: ['recommend', 'flag', 'reject'] },
@@ -107,8 +113,9 @@ PROCESS
 1. Start with a broad serpapi_search to find products in the price range.
 2. Run a second serpapi_search with source="reddit" to gather community sentiment.
 3. Use fetch_url on the 3–6 most promising results — product pages, review articles, top Reddit threads. You MUST call fetch_url at least ${MIN_FETCHES_BEFORE_RECORD} times before calling record_candidates; the orchestrator enforces this.
-4. Score each viable candidate against the rubric. Discard candidates that fall short.
-5. Call record_candidates EXACTLY ONCE with your final shortlist and a short scout_note. Then stop.
+4. For EACH product you intend to shortlist, run one more serpapi_search for that exact product name (e.g. "Razer Blade 16") and take that product's OWN page from the results — a retailer/manufacturer listing or a review dedicated to that one product. That is the url you record for it. A URL from search results is eligible without fetching it.
+5. Score each viable candidate against the rubric. Discard candidates that fall short.
+6. Call record_candidates EXACTLY ONCE with your final shortlist and a short scout_note. Then stop.
 
 URL RULES (strict — enforced by the orchestrator)
 - Every URL in record_candidates MUST be a URL that appeared in serpapi_search results or that you passed to fetch_url during THIS run.
@@ -116,6 +123,7 @@ URL RULES (strict — enforced by the orchestrator)
 - Do NOT modify URLs (no truncating, no removing query params, no swapping domains). Paste them EXACTLY as the tool returned them.
 - Prefer URLs you have actually fetched and read — those are the ones you have evidence for.
 - Each candidate's url MUST point to that ONE product's own page (a retailer/product listing, or the single review/thread about that product). NEVER use a "best of"/roundup/listicle URL or a generic search-results page as a candidate url, and NEVER reuse the same url for two candidates — every candidate needs its OWN distinct url. If your evidence came from a roundup, run another search for the specific product to find its own page, then record that. Cite roundups in sources_considered, never in url.
+- A url that differs from another only by its #fragment (anchor) is the SAME page. Never use fragments or tracking params to make one page look like several distinct urls.
 
 SCORING RUBRIC (0–100, weighted)
 - Brand legitimacy: 25
@@ -130,7 +138,7 @@ VERDICTS
 - reject:    score < 50, OR critical safety flag, OR price > budget × 1.20
 
 CONSTRAINTS
-- Do not exceed 4 searches or 8 fetches.
+- Do not exceed ${MAX_SEARCH_CALLS} searches or ${MAX_FETCH_CALLS} fetches, unless a tool message grants you a higher budget.
 - Cite the URLs you actually read in sources_considered.
 - Keep reasoning concise (1–3 sentences).
 - USD only. If a price isn't visible, use null.
@@ -153,6 +161,13 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
   ];
 
   const counts = { search: 0, fetch: 0, record: 0 };
+  // Mutable budgets: Gate D repairs raise them so "search for each product's
+  // own page" is actionable even when the initial budget is already spent.
+  let searchCap = MAX_SEARCH_CALLS;
+  let fetchCap = MAX_FETCH_CALLS;
+  // One repair per gate (instead of a shared retry counter) so tripping an
+  // early gate doesn't consume the URL-quality gate's repair chance.
+  const repairs = { fetchGate: false, schema: false, unknownUrls: false, urlQuality: 0 };
   const seenUrls = new Set<string>();
   let tokensIn = 0;
   let tokensOut = 0;
@@ -198,8 +213,8 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
       }
 
       if (name === 'serpapi_search') {
-        if (counts.search >= MAX_SEARCH_CALLS) {
-          messages.push({ role: 'tool', tool_call_id: tc.id, content: 'error: search budget exhausted (max 4). Stop searching and call record_candidates.' });
+        if (counts.search >= searchCap) {
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: `error: search budget exhausted (max ${searchCap}). Stop searching and call record_candidates.` });
           continue;
         }
         counts.search++;
@@ -219,16 +234,19 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
           messages.push({ role: 'tool', tool_call_id: tc.id, content: `error: ${(err as Error).message}` });
         }
       } else if (name === 'fetch_url') {
-        if (counts.fetch >= MAX_FETCH_CALLS) {
-          messages.push({ role: 'tool', tool_call_id: tc.id, content: 'error: fetch budget exhausted (max 8). Stop fetching and call record_candidates.' });
+        if (counts.fetch >= fetchCap) {
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: `error: fetch budget exhausted (max ${fetchCap}). Stop fetching and call record_candidates.` });
           continue;
         }
         counts.fetch++;
         const urlArg = args['url'];
         const url = typeof urlArg === 'string' ? urlArg : '';
-        if (url) seenUrls.add(url);
         try {
           const page = await fetchAndExtract(url);
+          // Allowlist only after a successful fetch: a URL the model merely
+          // TRIED to fetch may be invented; success proves the page exists
+          // and was actually read.
+          if (url) seenUrls.add(url);
           if (page.finalUrl) seenUrls.add(page.finalUrl);
           messages.push({
             role: 'tool',
@@ -242,12 +260,16 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
         }
       } else if (name === 'record_candidates') {
         counts.record++;
+        if (counts.record > MAX_RECORD_ATTEMPTS) {
+          throw new Error(`record_candidates exceeded ${MAX_RECORD_ATTEMPTS} attempts without passing validation gates`);
+        }
 
         // Gate A: must have actually opened pages before recording.
         if (counts.fetch < MIN_FETCHES_BEFORE_RECORD) {
-          if (counts.record >= 2) {
+          if (repairs.fetchGate) {
             throw new Error(`record_candidates called with insufficient fetches (${counts.fetch} < ${MIN_FETCHES_BEFORE_RECORD}) after retry`);
           }
+          repairs.fetchGate = true;
           messages.push({
             role: 'tool',
             tool_call_id: tc.id,
@@ -259,9 +281,10 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
         // Gate B: schema.
         const parsed = digestSchema.safeParse(args);
         if (!parsed.success) {
-          if (counts.record >= 2) {
+          if (repairs.schema) {
             throw new Error(`record_candidates schema invalid after retry: ${parsed.error.message}`);
           }
+          repairs.schema = true;
           const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
           messages.push({
             role: 'tool',
@@ -276,9 +299,10 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
           .map((c) => c.url)
           .filter((u) => !seenUrls.has(u));
         if (unknownUrls.length > 0) {
-          if (counts.record >= 2) {
+          if (repairs.unknownUrls) {
             throw new Error(`record_candidates referenced unknown URLs after retry: ${unknownUrls.join(', ')}`);
           }
+          repairs.unknownUrls = true;
           messages.push({
             role: 'tool',
             tool_call_id: tc.id,
@@ -287,20 +311,43 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
           continue;
         }
 
-        // Gate D: each candidate must link to its own distinct page. Reusing
-        // one roundup/listicle or search-results URL across candidates is the
-        // #1 quality bug (every pick links to the same "best of" article).
+        // Gate D: URL quality. Two failure modes, both observed in the wild:
+        //  (1) one URL reused across candidates — compared in normalized form
+        //      so #fragment / tracking-param variants of one page count as
+        //      the same page;
+        //  (2) a candidate url that is a roundup/"best of"/search page rather
+        //      than that product's own page.
+        // Repairs raise the search/fetch budgets so "search for each
+        // product's own page" is actionable even when budgets were spent.
         const dupeUrls = findDuplicateUrls(parsed.data.candidates);
-        if (dupeUrls.length > 0 && counts.record < 2) {
-          messages.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            content: `error: each candidate must link to its OWN distinct page, but you reused ${dupeUrls.join(', ')} for more than one candidate. Those look like "best of" roundups or search-results pages, not a single product. For each affected product, search for that product by name and use its own page (a retailer/product listing, or the specific review/thread about that one product). Re-call record_candidates with a unique url per candidate.`,
-          });
-          continue;
+        const genericCands = parsed.data.candidates.filter((c) => isGenericListUrl(c.url));
+        if (dupeUrls.length > 0 || genericCands.length > 0) {
+          if (repairs.urlQuality < MAX_URL_QUALITY_REPAIRS) {
+            repairs.urlQuality++;
+            // +3 per repair: a full shortlist can need one search per
+            // candidate (up to 5) on top of the 2 broad searches.
+            searchCap = Math.min(searchCap + 3, 12);
+            fetchCap = Math.min(fetchCap + 2, 12);
+            const problems: string[] = [];
+            if (dupeUrls.length > 0) {
+              problems.push(`These URLs are used by more than one candidate (URLs differing only by #fragment are the SAME page): ${dupeUrls.join(', ')}.`);
+            }
+            for (const c of genericCands) {
+              problems.push(`"${c.title}" links to ${c.url} — a roundup/list/search page, not that product's own page.`);
+            }
+            messages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: `error: candidate URL quality check failed. ${problems.join(' ')} For each affected product, run serpapi_search for its exact product name and use that product's OWN page from the results (a retailer/manufacturer listing, or a review/thread about that one product) — search-result URLs are eligible without fetching them. Keep roundups in sources_considered only. Your budgets were raised: ${searchCap} searches total (${searchCap - counts.search} remaining) and ${fetchCap} fetches total (${fetchCap - counts.fetch} remaining). Re-call record_candidates with a unique, product-specific url per candidate.`,
+            });
+            logger.warn({ iter, dupes: dupeUrls, generic: genericCands.map((c) => c.url), repair: repairs.urlQuality }, 'agent.url_quality.repair');
+            continue;
+          }
+          // Out of repairs: accept rather than fail the run. The dedupe
+          // safety net below collapses duplicates; surviving roundup URLs
+          // are logged so we can see how often steering falls short.
+          logger.warn({ iter, dupes: dupeUrls, generic: genericCands.map((c) => c.url) }, 'agent.url_quality.accepted_after_retries');
         }
-        // If duplicates somehow survive the retry, the dedupe safety net on
-        // return collapses them so the user never sees a repeated link.
 
         messages.push({ role: 'tool', tool_call_id: tc.id, content: 'ok' });
         final = parsed.data;
@@ -312,7 +359,16 @@ Find the best candidates. Use the tools. Call record_candidates exactly once whe
     }
 
     if (final) {
-      const deduped = dedupeCandidatesByUrl(final);
+      // Safety nets, in order: collapse same-page duplicates, then drop
+      // roundup/search links when a real product page survived (keeps the
+      // digest non-empty if EVERY url is generic), then prune dead links.
+      const deduped = preferProductPages(dedupeCandidatesByUrl(final));
+      if (deduped.candidates.length < final.candidates.length) {
+        logger.warn(
+          { recorded: final.candidates.length, kept: deduped.candidates.length },
+          'agent.url_quality.safety_net_dropped',
+        );
+      }
       const verified = await pruneDeadLinks(deduped);
       return {
         digest: verified,
